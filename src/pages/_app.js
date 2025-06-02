@@ -26,12 +26,14 @@ import {
   Feedback as FeedbackIcon,
   AutoStories,
   Gavel,
+  PictureAsPdf,
 } from "@mui/icons-material";
 import { SvgIcon } from "@mui/material";
 import discordIcon from "../../public/discord-mark-blue.svg";
 import React, { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useRouter } from "next/router";
+import CippPrintPage from "../components/CippComponents/CippPrintPage";
 import { persistQueryClient } from "@tanstack/react-query-persist-client";
 import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister";
 
@@ -89,6 +91,12 @@ const App = (props) => {
   }, []);
 
   const speedDialActions = [
+    {
+      id: "export-pdf",
+      icon: <PictureAsPdf />,
+      name: "Export as PDF",
+      onClick: CippPrintPage.handler,
+    },
     {
       id: "license",
       icon: <Gavel />,

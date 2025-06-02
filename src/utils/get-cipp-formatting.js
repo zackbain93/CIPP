@@ -56,12 +56,40 @@ export const getCippFormatting = (data, cellName, type, canReceive, flatten = tr
     portal_sharepoint: Description,
   };
 
+  // Helper to extract plain data from chip lists for export (PDF/text mode)
+  function extractChipListData(items) {
+    if (!Array.isArray(items) || items.length === 0) return [];
+    return items.map((item) => {
+      if (typeof item === "object" && item !== null) {
+        // If item has label and icon, extract both
+        if (item.label) {
+          return {
+            label: item.label,
+            icon: item.icon ? item.icon : null,
+          };
+        }
+        // If item is a React element with props.label
+        if (item.props && item.props.label) {
+          return {
+            label: item.props.label,
+            icon: item.props.icon || null,
+          };
+        }
+      }
+      // Otherwise, just return as string
+      return typeof item === "string" ? item : String(item);
+    });
+  }
+
   // Create a helper function to render chips with CollapsibleChipList
   const renderChipList = (items, maxItems = 4) => {
     if (!Array.isArray(items) || items.length === 0) {
       return <Chip variant="outlined" label="No data" size="small" color="info" />;
     }
-
+    // If in export/text mode, return plain string or array
+    if (typeof maxItems === "string" && maxItems === "export") {
+      return extractChipListData(items);
+    }
     return (
       <CollapsibleChipList maxItems={maxItems}>
         {items.map((item, index) => {
