@@ -196,6 +196,15 @@ export const getCippFormatting = (data, cellName, type, canReceive, flatten = tr
     return isText ? data : data;
   }
 
+  // Handle log message field
+  const messageFields = ["Message"];
+  if (messageFields.includes(cellName)) {
+    if (typeof data === "string" && data.length > 120) {
+      return isText ? data : `${data.substring(0, 120)}...`;
+    }
+    return isText ? data : data;
+  }
+
   if (cellName === "alignmentScore" || cellName === "combinedAlignmentScore") {
     // Handle alignment score, return a percentage with a label
     return isText ? (
@@ -357,6 +366,26 @@ export const getCippFormatting = (data, cellName, type, canReceive, flatten = tr
             />
           ));
     }
+  }
+  if (cellName === "standardType") {
+    return isText ? (
+      data
+    ) : (
+      <Chip
+        variant="outlined"
+        label={data === "drift" ? "Drift Standard" : "Classic Standard"}
+        size="small"
+        color="info"
+      />
+    );
+  }
+
+  if (cellName === "type" && data === "drift") {
+    return isText ? (
+      "Drift Standard"
+    ) : (
+      <Chip variant="outlined" label="Drift Standard" size="small" color="info" />
+    );
   }
 
   if (cellName === "ClientId" || cellName === "role") {

@@ -29,6 +29,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { CippDataTable } from "../CippTable/CippDataTable";
 import React from "react";
 import { CloudUpload } from "@mui/icons-material";
+import { Stack } from "@mui/system";
 
 // Helper function to convert bracket notation to dot notation
 // Improved to correctly handle nested bracket notations
@@ -243,7 +244,16 @@ export const CippFormComponent = (props) => {
       return (
         <>
           <FormControl>
-            <FormLabel>{label}</FormLabel>
+            <FormLabel>
+              <Stack>
+                {label}
+                {helperText && (
+                  <Typography variant="subtitle3" color="text.secondary">
+                    {helperText}
+                  </Typography>
+                )}
+              </Stack>
+            </FormLabel>
             <Controller
               name={convertedName}
               control={formControl.control}
@@ -292,7 +302,6 @@ export const CippFormComponent = (props) => {
                   label={label}
                   multiple={false}
                   onChange={(value) => field.onChange(value?.value)}
-                  helperText={helperText}
                 />
               )}
             />
@@ -319,7 +328,6 @@ export const CippFormComponent = (props) => {
                   defaultValue={field.value}
                   label={label}
                   onChange={(value) => field.onChange(value)}
-                  helperText={helperText}
                 />
               )}
             />
@@ -327,6 +335,11 @@ export const CippFormComponent = (props) => {
           <Typography variant="subtitle3" color="error">
             {get(errors, convertedName, {}).message}
           </Typography>
+          {helperText && (
+            <Typography variant="subtitle3" color="text.secondary">
+              {helperText}
+            </Typography>
+          )}
         </>
       );
 
