@@ -53,7 +53,7 @@ export const CippFormCondition = (props) => {
     }
   }
 
-  console.log("CippFormCondition: ", {
+  /*console.log("CippFormCondition: ", {
     watcher,
     watchedValue,
     compareTargetValue,
@@ -62,7 +62,7 @@ export const CippFormCondition = (props) => {
     action,
     field,
     propertyName,
-  });
+  });*/
 
   // Function to recursively extract field names from child components
   const extractFieldNames = (children) => {
@@ -181,6 +181,24 @@ export const CippFormCondition = (props) => {
             (item) => typeof item?.value === "string" && item.value.includes(compareValue)
           )
         );
+      case "isOneOf":
+        // Check if the watched value is one of the values in the compareValue array
+        if (!Array.isArray(compareValue)) {
+          console.warn(
+            "CippFormCondition: isOneOf compareType requires compareValue to be an array"
+          );
+          return false;
+        }
+        return compareValue.some((value) => isEqual(watchedValue, value));
+      case "isNotOneOf":
+        // Check if the watched value is NOT one of the values in the compareValue array
+        if (!Array.isArray(compareValue)) {
+          console.warn(
+            "CippFormCondition: isNotOneOf compareType requires compareValue to be an array"
+          );
+          return false;
+        }
+        return !compareValue.some((value) => isEqual(watchedValue, value));
       default:
         return false;
     }

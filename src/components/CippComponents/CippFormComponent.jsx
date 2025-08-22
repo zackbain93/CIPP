@@ -29,6 +29,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { CippDataTable } from "../CippTable/CippDataTable";
 import React from "react";
 import { CloudUpload } from "@mui/icons-material";
+import { Stack } from "@mui/system";
 
 // Helper function to convert bracket notation to dot notation
 // Improved to correctly handle nested bracket notations
@@ -243,7 +244,16 @@ export const CippFormComponent = (props) => {
       return (
         <>
           <FormControl>
-            <FormLabel>{label}</FormLabel>
+            <FormLabel>
+              <Stack>
+                {label}
+                {helperText && (
+                  <Typography variant="subtitle3" color="text.secondary">
+                    {helperText}
+                  </Typography>
+                )}
+              </Stack>
+            </FormLabel>
             <Controller
               name={convertedName}
               control={formControl.control}
@@ -292,7 +302,6 @@ export const CippFormComponent = (props) => {
                   label={label}
                   multiple={false}
                   onChange={(value) => field.onChange(value?.value)}
-                  helperText={helperText}
                 />
               )}
             />
@@ -319,7 +328,6 @@ export const CippFormComponent = (props) => {
                   defaultValue={field.value}
                   label={label}
                   onChange={(value) => field.onChange(value)}
-                  helperText={helperText}
                 />
               )}
             />
@@ -327,12 +335,17 @@ export const CippFormComponent = (props) => {
           <Typography variant="subtitle3" color="error">
             {get(errors, convertedName, {}).message}
           </Typography>
+          {helperText && (
+            <Typography variant="subtitle3" color="text.secondary">
+              {helperText}
+            </Typography>
+          )}
         </>
       );
 
     case "richText": {
       const editorInstanceRef = React.useRef(null);
-      const hasSetInitialValue = React.useRef(false);
+      const lastSetValue = React.useRef(null);
 
       return (
         <>
@@ -344,15 +357,15 @@ export const CippFormComponent = (props) => {
               render={({ field }) => {
                 const { value, onChange, ref } = field;
 
-                // Set content only once on first render
+                // Update content when value changes externally
                 React.useEffect(() => {
                   if (
                     editorInstanceRef.current &&
-                    !hasSetInitialValue.current &&
-                    typeof value === "string"
+                    typeof value === "string" &&
+                    value !== lastSetValue.current
                   ) {
                     editorInstanceRef.current.commands.setContent(value || "", false);
-                    hasSetInitialValue.current = true;
+                    lastSetValue.current = value;
                   }
                 }, [value]);
 
@@ -363,12 +376,19 @@ export const CippFormComponent = (props) => {
                       {...other}
                       ref={ref}
                       extensions={[StarterKit]}
-                      content="" // do not preload content
+                      content=""
                       onCreate={({ editor }) => {
                         editorInstanceRef.current = editor;
+                        // Set initial content when editor is created
+                        if (typeof value === "string") {
+                          editor.commands.setContent(value || "", false);
+                          lastSetValue.current = value;
+                        }
                       }}
                       onUpdate={({ editor }) => {
-                        onChange(editor.getHTML());
+                        const newValue = editor.getHTML();
+                        lastSetValue.current = newValue;
+                        onChange(newValue);
                       }}
                       label={label}
                       renderControls={() => (
