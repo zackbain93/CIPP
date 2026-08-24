@@ -7,6 +7,7 @@ import CalendarIcon from '@heroicons/react/24/outline/CalendarIcon'
 import { Download, Mail, Fingerprint, Launch } from '@mui/icons-material'
 import { HeaderedTabbedLayout } from '../../../../../layouts/HeaderedTabbedLayout'
 import tabOptions from './tabOptions'
+import { CippUserSwitcher } from '../../../../../components/CippComponents/CippUserSwitcher'
 import ReactTimeAgo from 'react-time-ago'
 import { CippCopyToClipBoard } from '../../../../../components/CippComponents/CippCopyToClipboard'
 import { Box, Stack } from '@mui/system'
@@ -19,6 +20,7 @@ import { PropertyListItem } from '../../../../../components/property-list-item'
 import { CippHead } from '../../../../../components/CippComponents/CippHead'
 import { BECRemediationReportButton } from '../../../../../components/BECRemediationReportButton'
 import { CippDataTable } from '../../../../../components/CippTable/CippDataTable'
+import { getBecIntuneDeviceActions } from '../../../../../components/CippComponents/CippIntuneDeviceActions.jsx'
 
 const checkItemSx = { px: 2, py: 0.75 }
 
@@ -105,17 +107,26 @@ const Page = () => {
       }
     }
 
-    if (becPollingCall.isSuccess && becPollingCall.data && !becPollingCall.data?.Waiting) {
+    // The !restart guard keeps a refresh from being cancelled: between clicking Refresh Data
+    // and the overwrite call resolving, the polling cache still holds the previous run, which
+    // would otherwise read as "done" and stop the loading state.
+    if (!restart && becPollingCall.isSuccess && becPollingCall.data && !becPollingCall.data?.Waiting) {
       setIsLoading(false)
     }
   }, [becPollingCall.dataUpdatedAt, becInitialCall])
 
   const restartProcess = () => {
     setRestart(true)
-    becPollingCall.refetch()
+    setIsLoading(true)
+    // The 500ms lets the re-render register Overwrite on the initial call's params. Poll only
+    // after the initial call resolves: the backend resets the cache row to Waiting before it
+    // responds, so a poll issued after that cannot race the reset and resurface the old run.
     setTimeout(() => {
-      becInitialCall.refetch()
-      becPollingCall.refetch()
+      becInitialCall.refetch().finally(() => {
+        // one-shot: without this every later refetch would force a fresh run
+        setRestart(false)
+        becPollingCall.refetch()
+      })
     }, 500)
   }
 
@@ -149,21 +160,23 @@ const Page = () => {
   const getUserMessage = () => {
     if (!becPollingCall.data) return null
     if (becPollingCall.data.NewUsers && becPollingCall.data.NewUsers.length > 0) {
-      return 'New users have been found in the last 14 days. Please review the list below and take action as needed.'
+      return 'New users have been found in the last 7 days. Please review the list below and take action as needed.'
     }
     return 'No new users found.'
   }
 
   const getAppMessage = () => {
     if (!becPollingCall.data) return null
+    const maliciousAddedCount = (becPollingCall.data.AddedApps || []).filter(
+      (app) => app?.MaliciousMatch
+    ).length
+    const maliciousPresentCount = becPollingCall.data.MaliciousSPs?.length || 0
+    if (maliciousAddedCount > 0 || maliciousPresentCount > 0) {
+      return `Potential Breach found: ${
+        maliciousAddedCount + maliciousPresentCount
+      } application(s) in this tenant match the CIPP known-malicious application catalog. Consent-based access survives a password reset, so remove these applications unless their presence is explained.`
+    }
     if (becPollingCall.data.AddedApps && becPollingCall.data.AddedApps.length > 0) {
-      // Example condition to check for potential breach
-      const hasPotentialBreach = becPollingCall.data.AddedApps.some(
-        (app) => /* your condition here */ false
-      )
-      if (hasPotentialBreach) {
-        return 'Potential Breach found.'
-      }
       return 'New applications have been found. Please review the list below and take action as needed.'
     }
     return 'No new applications found.'
@@ -171,11 +184,13 @@ const Page = () => {
 
   const getMailboxPermissionMessage = () => {
     if (!becPollingCall.data) return null
-    if (
-      becPollingCall.data.MailboxPermissionChanges &&
-      becPollingCall.data.MailboxPermissionChanges.length > 0
-    ) {
-      return 'Mailbox permission changes have been found.'
+    const changes = becPollingCall.data.MailboxPermissionChanges || []
+    if (changes.length > 0) {
+      const targeting = changes.filter((c) => c?.TargetsSuspect === true).length
+      if (targeting > 0) {
+        return `${changes.length} mailbox permission change(s) found across the tenant in the last 7 days, ${targeting} of which target this mailbox. Review those first.`
+      }
+      return `${changes.length} mailbox permission change(s) found across the tenant in the last 7 days. None appear to target this mailbox, but verify the list below.`
     }
     return 'No mailbox permission changes found.'
   }
@@ -183,13 +198,38 @@ const Page = () => {
   const getSentMessagesMessage = () => {
     if (!becPollingCall.data) return null
     if (becPollingCall.data.SentMessages && becPollingCall.data.SentMessages.length > 0) {
-      return 'Sent messages have been found. Please review the list below for any suspicious activity.'
+      const analysis = becPollingCall.data.SentMessageAnalysis
+      const parts = [
+        `${analysis?.TotalMessages ?? becPollingCall.data.SentMessages.length} message(s) to ${
+          analysis?.TotalRecipients ?? becPollingCall.data.SentMessages.length
+        } recipient(s) were sent in the last 7 days`,
+      ]
+      if (analysis?.FlaggedSubjectCount > 0) {
+        parts.push(
+          `${analysis.FlaggedSubjectCount} subject(s) were sent as many separate messages or to many recipients — identical-subject mass mail is a classic sign of a compromised mailbox running a campaign`
+        )
+      }
+      if (analysis?.Bursts?.length > 0) {
+        parts.push(
+          `${analysis.Bursts.length} short burst(s) of high-volume sending were detected`
+        )
+      }
+      const foreignCount = becPollingCall.data.LocationAnalysis?.ForeignSentMessageCount || 0
+      if (foreignCount > 0) {
+        parts.push(
+          `${foreignCount} message(s) were sent from an IP outside the user's assigned usage location`
+        )
+      }
+      return `${parts.join('. ')}. Please review the list below for any suspicious activity.`
     }
     return 'No sent messages found in the specified time range.'
   }
 
   const getSafelistMessage = () => {
     if (!becPollingCall.data) return null
+    if (becPollingCall.data.SafelistError) {
+      return `${becPollingCall.data.SafelistError} An empty list here is not proof the mailbox has none — refresh after fixing the underlying problem.`
+    }
     const trustedCount = becPollingCall.data.TrustedSenders?.length || 0
     const blockedCount = becPollingCall.data.BlockedSenders?.length || 0
     const changeCount = becPollingCall.data.SafelistChanges?.length || 0
@@ -215,6 +255,166 @@ const Page = () => {
     ],
     [becPollingCall.data]
   )
+
+  // the analysis window: 7 days before the data was extracted. Shared by the Intune
+  // enrollment and MFA registration recency checks.
+  const analysisWindowStart = useMemo(() => {
+    const extractedAt = becPollingCall.data?.ExtractedAt
+      ? new Date(becPollingCall.data.ExtractedAt)
+      : new Date()
+    if (Number.isNaN(extractedAt.getTime())) {
+      return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    }
+    return new Date(extractedAt.getTime() - 7 * 24 * 60 * 60 * 1000)
+  }, [becPollingCall.data?.ExtractedAt])
+
+  const recentMfaDeviceCount = useMemo(
+    () =>
+      (becPollingCall.data?.MFADevices || []).filter((method) => {
+        if (!method?.createdDateTime) return false
+        const created = new Date(method.createdDateTime)
+        if (Number.isNaN(created.getTime())) return false
+        return created >= analysisWindowStart
+      }).length,
+    [becPollingCall.data?.MFADevices, analysisWindowStart]
+  )
+
+  const foreignActivityCount = useMemo(() => {
+    const analysis = becPollingCall.data?.LocationAnalysis
+    if (!analysis) return 0
+    return (
+      (analysis.ForeignSignInCount || 0) +
+      (analysis.ForeignRuleChangeCount || 0) +
+      (analysis.ForeignSafelistChangeCount || 0) +
+      (analysis.ForeignSharingChangeCount || 0) +
+      (analysis.ForeignSentMessageCount || 0)
+    )
+  }, [becPollingCall.data?.LocationAnalysis])
+
+  const intuneDevices = useMemo(() => {
+    const devices = [...(becPollingCall.data?.IntuneDevices || [])]
+    devices.sort((a, b) => {
+      const aTime = a?.enrolledDateTime ? new Date(a.enrolledDateTime).getTime() : 0
+      const bTime = b?.enrolledDateTime ? new Date(b.enrolledDateTime).getTime() : 0
+      return bTime - aTime
+    })
+    return devices
+  }, [becPollingCall.data?.IntuneDevices])
+
+  const recentIntuneDeviceCount = useMemo(
+    () =>
+      intuneDevices.filter((device) => {
+        if (!device?.enrolledDateTime) return false
+        const enrolled = new Date(device.enrolledDateTime)
+        if (Number.isNaN(enrolled.getTime())) return false
+        return enrolled >= analysisWindowStart
+      }).length,
+    [intuneDevices, analysisWindowStart]
+  )
+
+  const intuneDeviceActions = useMemo(
+    () => getBecIntuneDeviceActions({ tenantFilter: userSettingsDefaults.currentTenant }),
+    [userSettingsDefaults.currentTenant]
+  )
+
+  const getMfaMessage = () => {
+    if (!becPollingCall.data) return null
+    const count = becPollingCall.data.MFADevices?.length || 0
+    if (count === 0) {
+      return 'No MFA methods are registered for this user. If MFA was expected, an attacker may have removed it; either way the account currently has no second factor.'
+    }
+    if (recentMfaDeviceCount > 0) {
+      return `${count} MFA method(s) registered, ${recentMfaDeviceCount} in the last 7 days. Verify the recent registrations were made by the user — attackers register their own method to keep access after a password reset.`
+    }
+    return `${count} MFA method(s) registered. Please review the list below and take action as required.`
+  }
+
+  const getSignInLocationMessage = () => {
+    if (!becPollingCall.data) return null
+    if (becPollingCall.data.SuspectUserSignInsError) {
+      return `${becPollingCall.data.SuspectUserSignInsError} This is not proof the user has no sign-ins — fix the underlying permission or licensing problem and refresh.`
+    }
+    const analysis = becPollingCall.data.LocationAnalysis
+    const signInCount = becPollingCall.data.SuspectUserSignIns?.length || 0
+    if (signInCount === 0) {
+      return 'No sign-ins were found for this user in the sign-in logs.'
+    }
+    const countries = (analysis?.SignInCountries || [])
+      .map((c) => `${c.Country} (${c.Count})`)
+      .join(', ')
+    if (!analysis?.UsageLocation) {
+      return `${
+        analysis?.Note ||
+        'The user has no usage location assigned in Entra ID, so activity cannot be compared against an expected country.'
+      } Sign-in countries seen: ${countries || 'none recorded'}.`
+    }
+    const foreignParts = []
+    if (analysis.ForeignSignInCount > 0) {
+      foreignParts.push(
+        `${analysis.ForeignSignInCount} sign-in(s), of which ${
+          analysis.ForeignSuccessfulSignInCount || 0
+        } succeeded (failed foreign attempts are mostly password-spray noise)`
+      )
+    }
+    if (analysis.ForeignRuleChangeCount > 0) {
+      foreignParts.push(`${analysis.ForeignRuleChangeCount} inbox rule change(s)`)
+    }
+    if (analysis.ForeignSafelistChangeCount > 0) {
+      foreignParts.push(`${analysis.ForeignSafelistChangeCount} safelist change(s)`)
+    }
+    if (analysis.ForeignSharingChangeCount > 0) {
+      foreignParts.push(`${analysis.ForeignSharingChangeCount} sharing change(s)`)
+    }
+    if (analysis.ForeignSentMessageCount > 0) {
+      foreignParts.push(`${analysis.ForeignSentMessageCount} sent message(s)`)
+    }
+    if (foreignParts.length > 0) {
+      return `The user's assigned usage location is ${
+        analysis.UsageLocation
+      }, but activity originated outside it: ${foreignParts.join(
+        ', '
+      )}. Sign-in countries seen: ${countries}. Review the sign-ins below and the flagged rows in the checks above.`
+    }
+    return `All located activity matches the user's assigned usage location (${
+      analysis.UsageLocation
+    }). Sign-in countries seen: ${countries || 'none recorded'}.`
+  }
+
+  const getSharingMessage = () => {
+    if (!becPollingCall.data) return null
+    const changes = becPollingCall.data.SharingChanges || []
+    if (changes.length === 0) {
+      return 'No sharing links were created or changed by this account in the last 7 days.'
+    }
+    const anonymousCount = changes.filter((c) => c?.Operation?.startsWith('AnonymousLink')).length
+    const foreignCount = becPollingCall.data.LocationAnalysis?.ForeignSharingChangeCount || 0
+    const parts = [
+      `${changes.length} OneDrive/SharePoint sharing change(s) found in the last 7 days`,
+    ]
+    if (anonymousCount > 0) {
+      parts.push(`${anonymousCount} involve anonymous links, which anyone with the URL can open`)
+    }
+    if (foreignCount > 0) {
+      parts.push(`${foreignCount} were made from outside the user's usage location`)
+    }
+    return `${parts.join(
+      '. '
+    )}. Attackers share folders to keep pulling data after a password reset — review each link and remove any that are not explained.`
+  }
+
+  const getIntuneDevicesMessage = () => {
+    if (!becPollingCall.data) return null
+    if (becPollingCall.data.IntuneDevicesError) {
+      return `Could not retrieve Intune-managed devices: ${becPollingCall.data.IntuneDevicesError}. This is not proof that the user has no devices — refresh after fixing permissions or licensing, or check Endpoint → MEM → Devices.`
+    }
+    if (intuneDevices.length === 0) {
+      return 'No Intune-managed devices found for this user.'
+    }
+    if (recentIntuneDeviceCount > 0) {
+      return `${intuneDevices.length} Intune-managed device(s) found for this user, ${recentIntuneDeviceCount} enrolled in the last 7 days. Prioritize review of recent enrollments (new VM, BYOD, or Windows Hello persistence risk). Retire or factory-wipe from the row actions if needed (requires MEM write permission). Refresh Data after actions to update this list.`
+    }
+    return `${intuneDevices.length} Intune-managed device(s) found for this user. None were enrolled in the last 7 days. Review the list below and take action as needed. Retire or factory-wipe from the row actions if needed (requires MEM write permission). Refresh Data after actions to update this list.`
+  }
 
   const subtitle = userRequest.isSuccess
     ? [
@@ -256,6 +456,13 @@ const Page = () => {
     <HeaderedTabbedLayout
       tabOptions={tabOptions}
       title={userRequest.isSuccess ? userRequest.data?.[0]?.displayName : ''}
+      titleControl={
+        <CippUserSwitcher
+          title={userRequest.isSuccess ? userRequest.data?.[0]?.displayName : ''}
+          currentUserId={userId}
+          tenantFilter={userSettingsDefaults.currentTenant}
+        />
+      }
       subtitle={subtitle}
       isFetching={userRequest.isFetching}
     >
@@ -270,7 +477,7 @@ const Page = () => {
         >
           <Grid container spacing={2}>
             {/* Remediation Card */}
-            <Grid size={5}>
+            <Grid size={{ xs: 12, lg: 5 }}>
               <CippRemediationCard
                 userPrincipalName={userRequest.data[0].userPrincipalName}
                 userId={userRequest.data[0].id}
@@ -280,7 +487,7 @@ const Page = () => {
               />
             </Grid>
             {/* Check 1 Card with Loading */}
-            <Grid size={7}>
+            <Grid size={{ xs: 12, lg: 7 }}>
               <CippButtonCard
                 variant="outlined"
                 isFetching={false}
@@ -311,7 +518,7 @@ const Page = () => {
         >
           <Grid container spacing={2}>
             {/* Remediation Card */}
-            <Grid size={5}>
+            <Grid size={{ xs: 12, lg: 5 }}>
               <CippRemediationCard
                 userPrincipalName={userRequest.data[0].userPrincipalName}
                 userId={userRequest.data[0].id}
@@ -321,7 +528,7 @@ const Page = () => {
               />
             </Grid>
             {/* All Steps */}
-            <Grid size={7}>
+            <Grid size={{ xs: 12, lg: 7 }}>
               <Stack spacing={3}>
                 <BecCheckCard title="Log information">
                   <Typography variant="body2" gutterBottom>
@@ -374,10 +581,16 @@ const Page = () => {
                             <PropertyListItem
                               key={index}
                               sx={checkItemSx}
-                              label={`${change?.Operation} - ${change?.RuleName}`}
-                              value={`${change?.Date} by ${change?.UserKey}${
-                                change?.Parameters ? ` | ${change.Parameters}` : ''
+                              label={`${change?.Operation} - ${change?.RuleName}${
+                                change?.ForeignLocation === true ? ' - outside usage location' : ''
                               }`}
+                              value={`${change?.Date} by ${change?.UserKey}${
+                                change?.ClientIP
+                                  ? ` from ${change.ClientIP}${
+                                      change?.Country ? ` (${change.Country})` : ''
+                                    }`
+                                  : ''
+                              }${change?.Parameters ? ` | ${change.Parameters}` : ''}`}
                             />
                           ))}
                         </PropertyList>
@@ -414,7 +627,10 @@ const Page = () => {
                 {/* Check 3: New Applications */}
                 <BecCheckCard
                   title="Check 3: New Applications"
-                  count={becPollingCall.data?.AddedApps?.length || 0}
+                  count={
+                    (becPollingCall.data?.AddedApps?.length || 0) +
+                    (becPollingCall.data?.MaliciousSPs?.length || 0)
+                  }
                 >
                   <Typography variant="body2" gutterBottom>
                     {getAppMessage()}
@@ -422,15 +638,46 @@ const Page = () => {
                   {becPollingCall.data?.AddedApps?.length > 0 && (
                     <Box mt={2} sx={{ maxHeight: 300, overflowY: 'auto' }}>
                       <PropertyList>
-                        {becPollingCall.data.AddedApps.map((app, index) => (
-                          <PropertyListItem
-                            key={index}
-                            sx={checkItemSx}
-                            label={`${app?.displayName} - ${app?.appId}`}
-                            value={app?.createdDateTime}
-                          />
-                        ))}
+                        {[...becPollingCall.data.AddedApps]
+                          .sort((a, b) => !!b?.MaliciousMatch - !!a?.MaliciousMatch)
+                          .map((app, index) => (
+                            <PropertyListItem
+                              key={index}
+                              sx={checkItemSx}
+                              label={
+                                app?.MaliciousMatch
+                                  ? `${app?.displayName} - ${app?.appId} - matches known-malicious catalog entry "${app.MaliciousMatch.Name}"`
+                                  : `${app?.displayName} - ${app?.appId}`
+                              }
+                              value={
+                                app?.MaliciousMatch?.Categories?.length
+                                  ? `${app?.createdDateTime} | ${app.MaliciousMatch.Categories.join(', ')}`
+                                  : app?.createdDateTime
+                              }
+                            />
+                          ))}
                       </PropertyList>
+                    </Box>
+                  )}
+                  {becPollingCall.data?.MaliciousSPs?.length > 0 && (
+                    <Box mt={2}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Known-malicious applications present in the tenant (any age)
+                      </Typography>
+                      <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
+                        <PropertyList>
+                          {becPollingCall.data.MaliciousSPs.map((app, index) => (
+                            <PropertyListItem
+                              key={index}
+                              sx={checkItemSx}
+                              label={`${app?.displayName} - ${app?.appId}`}
+                              value={`Catalog: ${app?.CatalogName}${
+                                app?.Categories?.length ? ` (${app.Categories.join(', ')})` : ''
+                              } | Enabled: ${app?.accountEnabled} | Added: ${app?.createdDateTime}`}
+                            />
+                          ))}
+                        </PropertyList>
+                      </Box>
                     </Box>
                   )}
                 </BecCheckCard>
@@ -446,14 +693,20 @@ const Page = () => {
                   {becPollingCall.data?.MailboxPermissionChanges?.length > 0 && (
                     <Box mt={2} sx={{ maxHeight: 300, overflowY: 'auto' }}>
                       <PropertyList>
-                        {becPollingCall.data.MailboxPermissionChanges.map((permission, index) => (
-                          <PropertyListItem
-                            key={index}
-                            sx={checkItemSx}
-                            label={permission.UserKey}
-                            value={`${permission.Operation} - ${permission.Permissions}`}
-                          />
-                        ))}
+                        {[...becPollingCall.data.MailboxPermissionChanges]
+                          .sort((a, b) => (b?.TargetsSuspect === true) - (a?.TargetsSuspect === true))
+                          .map((permission, index) => (
+                            <PropertyListItem
+                              key={index}
+                              sx={checkItemSx}
+                              label={
+                                permission?.TargetsSuspect === true
+                                  ? `${permission.UserKey} - targets this mailbox`
+                                  : permission.UserKey
+                              }
+                              value={`${permission.Operation} - ${permission.Permissions}`}
+                            />
+                          ))}
                       </PropertyList>
                     </Box>
                   )}
@@ -467,6 +720,52 @@ const Page = () => {
                   <Typography variant="body2" gutterBottom>
                     {getSentMessagesMessage()}
                   </Typography>
+                  {becPollingCall.data?.SentMessageAnalysis?.RepeatedSubjects?.length > 0 && (
+                    <Box mt={2}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Repeated subjects
+                      </Typography>
+                      <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
+                        <PropertyList>
+                          {becPollingCall.data.SentMessageAnalysis.RepeatedSubjects.map(
+                            (group, index) => (
+                              <PropertyListItem
+                                key={index}
+                                sx={checkItemSx}
+                                label={
+                                  group?.Flagged
+                                    ? `${group?.Subject} - possible campaign`
+                                    : group?.Subject
+                                }
+                                value={`${group?.MessageCount} message(s) to ${group?.RecipientCount} recipient(s) between ${group?.FirstSent} and ${group?.LastSent}`}
+                              />
+                            )
+                          )}
+                        </PropertyList>
+                      </Box>
+                    </Box>
+                  )}
+                  {becPollingCall.data?.SentMessageAnalysis?.Bursts?.length > 0 && (
+                    <Box mt={2}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Send bursts
+                      </Typography>
+                      <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
+                        <PropertyList>
+                          {becPollingCall.data.SentMessageAnalysis.Bursts.map((burst, index) => (
+                            <PropertyListItem
+                              key={index}
+                              sx={checkItemSx}
+                              label={`${burst?.MessageCount} message(s) to ${burst?.RecipientCount} recipient(s) within ${burst?.WindowMinutes} minutes`}
+                              value={`Starting ${burst?.WindowStart}${
+                                burst?.TopSubject ? ` | Most common subject: ${burst.TopSubject}` : ''
+                              }`}
+                            />
+                          ))}
+                        </PropertyList>
+                      </Box>
+                    </Box>
+                  )}
                   {becPollingCall.data?.SentMessages?.length > 0 && (
                     <Box mt={2}>
                       <CippDataTable
@@ -474,7 +773,14 @@ const Page = () => {
                         hideTitle={true}
                         title="Sent Messages"
                         data={becPollingCall.data.SentMessages}
-                        simpleColumns={['Subject', 'RecipientAddress', 'Status', 'Received', 'FromIP']}
+                        simpleColumns={[
+                          'Subject',
+                          'RecipientAddress',
+                          'Status',
+                          'Received',
+                          'FromIP',
+                          'Country',
+                        ]}
                       />
                     </Box>
                   )}
@@ -485,21 +791,34 @@ const Page = () => {
                   count={becPollingCall.data?.MFADevices?.length || 0}
                 >
                   <Typography variant="body2" gutterBottom>
-                    MFA Devices have been found. Please review the list below and take action as
-                    required
+                    {getMfaMessage()}
                   </Typography>
                   {becPollingCall.data?.MFADevices?.length > 0 && (
                     <Box mt={2} sx={{ maxHeight: 300, overflowY: 'auto' }}>
                       <PropertyList>
-                        {becPollingCall.data.MFADevices.map((permission, index) => (
-                          <PropertyListItem
-                            key={index}
-                            sx={checkItemSx}
-                            align="horizontal"
-                            label={permission['@odata.type']}
-                            value={`${permission?.displayName} - Registered at ${permission?.createdDateTime}`}
-                          />
-                        ))}
+                        {[...becPollingCall.data.MFADevices]
+                          .sort(
+                            (a, b) =>
+                              new Date(b?.createdDateTime || 0) - new Date(a?.createdDateTime || 0)
+                          )
+                          .map((method, index) => {
+                            const isRecent =
+                              method?.createdDateTime &&
+                              new Date(method.createdDateTime) >= analysisWindowStart
+                            return (
+                              <PropertyListItem
+                                key={index}
+                                sx={checkItemSx}
+                                align="horizontal"
+                                label={
+                                  isRecent
+                                    ? `${method['@odata.type']} - registered in last 7 days`
+                                    : method['@odata.type']
+                                }
+                                value={`${method?.displayName} - Registered at ${method?.createdDateTime}`}
+                              />
+                            )
+                          })}
                       </PropertyList>
                     </Box>
                   )}
@@ -533,12 +852,18 @@ const Page = () => {
                 <BecCheckCard
                   title="Check 8: Trusted & Blocked Senders"
                   count={
-                    (becPollingCall.data?.TrustedSenders?.length || 0) +
-                    (becPollingCall.data?.BlockedSenders?.length || 0) +
-                    (becPollingCall.data?.SafelistChanges?.length || 0)
+                    becPollingCall.data?.SafelistError
+                      ? undefined
+                      : (becPollingCall.data?.TrustedSenders?.length || 0) +
+                        (becPollingCall.data?.BlockedSenders?.length || 0) +
+                        (becPollingCall.data?.SafelistChanges?.length || 0)
                   }
                 >
-                  <Typography variant="body2" gutterBottom>
+                  <Typography
+                    variant="body2"
+                    gutterBottom
+                    color={becPollingCall.data?.SafelistError ? 'error' : 'inherit'}
+                  >
                     {getSafelistMessage()}
                   </Typography>
                   {senderRows.length > 0 && (
@@ -563,8 +888,16 @@ const Page = () => {
                             <PropertyListItem
                               key={index}
                               sx={checkItemSx}
-                              label={`${change?.Operation} by ${change?.UserKey}`}
-                              value={`${change?.Date} | Trusted: ${formatSafelistValue(
+                              label={`${change?.Operation} by ${change?.UserKey}${
+                                change?.ForeignLocation === true ? ' - outside usage location' : ''
+                              }`}
+                              value={`${change?.Date}${
+                                change?.ClientIP
+                                  ? ` from ${change.ClientIP}${
+                                      change?.Country ? ` (${change.Country})` : ''
+                                    }`
+                                  : ''
+                              } | Trusted: ${formatSafelistValue(
                                 change?.Trusted
                               )} | Blocked: ${formatSafelistValue(change?.Blocked)}`}
                             />
@@ -575,7 +908,108 @@ const Page = () => {
                   )}
                 </BecCheckCard>
 
-                {/* Check 9: Report Data */}
+                <BecCheckCard
+                  title="Check 9: Intune Devices"
+                  count={
+                    becPollingCall.data?.IntuneDevicesError ? undefined : recentIntuneDeviceCount
+                  }
+                >
+                  <Typography
+                    variant="body2"
+                    gutterBottom
+                    color={becPollingCall.data?.IntuneDevicesError ? 'error' : 'inherit'}
+                  >
+                    {getIntuneDevicesMessage()}
+                  </Typography>
+                  {intuneDevices.length > 0 && (
+                    <Box mt={2}>
+                      <CippDataTable
+                        noCard={true}
+                        hideTitle={true}
+                        title="Intune Devices"
+                        data={intuneDevices}
+                        simpleColumns={[
+                          'deviceName',
+                          'operatingSystem',
+                          'osVersion',
+                          'complianceState',
+                          'enrolledDateTime',
+                          'lastSyncDateTime',
+                          'deviceEnrollmentType',
+                          'serialNumber',
+                        ]}
+                        actions={intuneDeviceActions}
+                      />
+                    </Box>
+                  )}
+                </BecCheckCard>
+
+                {/* Check 10: Sign-in Locations */}
+                <BecCheckCard
+                  title="Check 10: Sign-in Locations"
+                  count={
+                    becPollingCall.data?.SuspectUserSignInsError ? undefined : foreignActivityCount
+                  }
+                >
+                  <Typography
+                    variant="body2"
+                    gutterBottom
+                    color={becPollingCall.data?.SuspectUserSignInsError ? 'error' : 'inherit'}
+                  >
+                    {getSignInLocationMessage()}
+                  </Typography>
+                  {becPollingCall.data?.SuspectUserSignIns?.length > 0 && (
+                    <Box mt={2}>
+                      <CippDataTable
+                        noCard={true}
+                        hideTitle={true}
+                        title="Sign-in Locations"
+                        data={becPollingCall.data.SuspectUserSignIns}
+                        simpleColumns={[
+                          'CreatedDateTime',
+                          'AppDisplayName',
+                          'Status',
+                          'IPAddress',
+                          'Country',
+                          'City',
+                          'ForeignLocation',
+                        ]}
+                      />
+                    </Box>
+                  )}
+                </BecCheckCard>
+
+                {/* Check 11: Sharing Links */}
+                <BecCheckCard
+                  title="Check 11: Sharing Links"
+                  count={becPollingCall.data?.SharingChanges?.length || 0}
+                >
+                  <Typography variant="body2" gutterBottom>
+                    {getSharingMessage()}
+                  </Typography>
+                  {becPollingCall.data?.SharingChanges?.length > 0 && (
+                    <Box mt={2}>
+                      <CippDataTable
+                        noCard={true}
+                        hideTitle={true}
+                        title="Sharing Links"
+                        data={becPollingCall.data.SharingChanges}
+                        simpleColumns={[
+                          'Date',
+                          'Operation',
+                          'FileName',
+                          'Target',
+                          'Workload',
+                          'ClientIP',
+                          'Country',
+                          'ForeignLocation',
+                        ]}
+                      />
+                    </Box>
+                  )}
+                </BecCheckCard>
+
+                {/* Report Data */}
                 <BecCheckCard title="Report">
                   <Typography variant="body2" gutterBottom>
                     Generate a comprehensive PDF report for documentation, compliance, or end-user

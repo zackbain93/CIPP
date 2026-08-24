@@ -149,6 +149,7 @@ const Page = () => {
         ClearImmutableId: false,
         DisableOneDriveSharing: false,
         removeCalendarPermissions: false,
+        OOO: '',
       }
 
       let offboardingDefaults = {}
@@ -190,6 +191,7 @@ const Page = () => {
       ClearImmutableId: false,
       DisableOneDriveSharing: false,
       removeCalendarPermissions: false,
+      OOO: '',
     }
 
     offboardingFormControl.reset({ offboardingDefaults: defaultOffboardingValues })
@@ -254,16 +256,18 @@ const Page = () => {
               title="Tenant Details"
               actionButton={
                 <Tooltip title="Refresh">
-                  <IconButton
-                    onClick={() => tenantDetails.refetch()}
-                    disabled={tenantDetails.isFetching}
-                    size="small"
-                    sx={{ mt: 0.25 }}
-                  >
-                    <SvgIcon fontSize="small">
-                      <Sync />
-                    </SvgIcon>
-                  </IconButton>
+                  <span>
+                    <IconButton
+                      onClick={() => tenantDetails.refetch()}
+                      disabled={tenantDetails.isFetching}
+                      size="small"
+                      sx={{ mt: 0.25 }}
+                    >
+                      <SvgIcon fontSize="small">
+                        <Sync />
+                      </SvgIcon>
+                    </IconButton>
+                  </span>
                 </Tooltip>
               }
               propertyItems={[

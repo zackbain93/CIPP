@@ -324,7 +324,7 @@ const Page = () => {
             config: JSON.stringify({
               ApplicationName: r.displayName,
               IntuneBody: r,
-              assignTo: 'On',
+              AssignTo: 'On',
             }),
           })),
         }
@@ -386,9 +386,9 @@ const Page = () => {
             <Button onClick={vppSyncDialog.handleOpen} startIcon={<Sync />}>
               Sync VPP
             </Button>
-            {reportDB.controls}
           </Stack>
         }
+        dataSourceControls={reportDB.controls}
       />
       <CippApiDialog
         title="Sync VPP Tokens"

@@ -215,6 +215,11 @@ export const CippAppTemplateDrawer = ({
         if (repoMatch) config.customRepo = repoMatch[1]
       }
     }
+    // Canonical spelling only, same as ApplicationName above. Leaving 'assignTo' next to
+    // 'AssignTo' puts both on the form and stores both on save, and PowerShell's ConvertFrom-Json
+    // cannot read an object holding two casings of one key.
+    if (!config.AssignTo && config.assignTo) config.AssignTo = config.assignTo
+    delete config.assignTo
     formControl.reset({ appType: config.appType })
     setTimeout(() => {
       Object.entries(config).forEach(([key, value]) => {
@@ -331,7 +336,7 @@ export const CippAppTemplateDrawer = ({
 
           {/* Added Apps List */}
           {apps.length > 0 && (
-            <Grid size={{ xs: 12 }}>
+            <Grid size={{ xs: 12, md: 5 }}>
               <Typography variant="subtitle2" sx={{ mb: 1 }}>
                 Apps in this template:
               </Typography>
@@ -416,7 +421,7 @@ export const CippAppTemplateDrawer = ({
                 formControl={formControl}
               />
             </Grid>
-            <Grid size={{ xs: 12 }}>
+            <Grid size={{ xs: 12, md: 5 }}>
               <Alert severity="info">
                 Enter tenant-specific parameters (keys, URLs, IDs) below. You can enter a literal
                 value that is the same for every tenant, or reference a CIPP custom variable like{' '}
@@ -559,7 +564,7 @@ export const CippAppTemplateDrawer = ({
                 formControl={formControl}
               />
             </Grid>
-            <Grid size={{ xs: 5 }}>
+            <Grid size={{ xs: 12 }}>
               <Button
                 onClick={() => searchApp(formControl.getValues('searchQuery'), 'StoreApp')}
                 disabled={winGetSearchResults.isPending}
@@ -634,7 +639,7 @@ export const CippAppTemplateDrawer = ({
                 formControl={formControl}
               />
             </Grid>
-            <Grid size={{ xs: 5 }}>
+            <Grid size={{ xs: 12 }}>
               <Button
                 onClick={() => searchApp(formControl.getValues('searchQuery'), 'choco')}
                 disabled={ChocosearchResults.isPending}

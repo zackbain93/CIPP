@@ -20,6 +20,7 @@ import {
 } from '@mui/icons-material'
 import { HeaderedTabbedLayout } from '../../../../../layouts/HeaderedTabbedLayout'
 import tabOptions from './tabOptions'
+import { CippUserSwitcher } from '../../../../../components/CippComponents/CippUserSwitcher'
 import { CippTimeAgo } from '../../../../../components/CippComponents/CippTimeAgo'
 import { CippCopyToClipBoard } from '../../../../../components/CippComponents/CippCopyToClipboard'
 import { Box, Stack } from '@mui/system'
@@ -801,26 +802,16 @@ const Page = () => {
             icon: <Delete />,
             url: '/api/ExecModifyCalPerms',
             customDataformatter: (row, action, formData) => {
-              var permissions = []
-              if (Array.isArray(row)) {
-                row.forEach((item) => {
-                  const originalUser = item._raw ? item._raw.User : item.User
-                  permissions.push({
-                    UserID: originalUser, // Use original identifier for API calls
-                    PermissionLevel: item.AccessRights,
-                    FolderName: item.FolderName,
-                    Modification: 'Remove',
-                  })
-                })
-              } else {
-                const originalUser = row._raw ? row._raw.User : row.User
-                permissions.push({
-                  UserID: originalUser, // Use original identifier for API calls
-                  PermissionLevel: row.AccessRights,
-                  FolderName: row.FolderName,
-                  Modification: 'Remove',
-                })
-              }
+              const rows = Array.isArray(row) ? row : [row]
+              // UserId is the resolved recipient; User is only a display
+              // name, which Exchange cannot resolve when two share it.
+              const permissions = rows.map((item) => ({
+                UserID: item._raw?.UserId || item._raw?.User || item.User,
+                DisplayName: item._raw?.User || item.User,
+                PermissionLevel: item.AccessRights,
+                FolderName: item.FolderName,
+                Modification: 'Remove',
+              }))
               return {
                 userID: graphUserRequest.data?.[0]?.userPrincipalName,
                 tenantFilter: userSettingsDefaults.currentTenant,
@@ -870,7 +861,8 @@ const Page = () => {
                       tenantFilter: userSettingsDefaults.currentTenant,
                       permissions: [
                         {
-                          UserID: originalUser, // Use original identifier for API calls
+                          UserID: data._raw?.UserId || originalUser,
+                          DisplayName: originalUser,
                           PermissionLevel: data.AccessRights,
                           FolderName: data.FolderName,
                           Modification: 'Remove',
@@ -944,26 +936,16 @@ const Page = () => {
             icon: <Delete />,
             url: '/api/ExecModifyContactPerms',
             customDataformatter: (row, action, formData) => {
-              var permissions = []
-              if (Array.isArray(row)) {
-                row.forEach((item) => {
-                  const originalUser = item._raw ? item._raw.User : item.User
-                  permissions.push({
-                    UserID: originalUser, // Use original identifier for API calls
-                    PermissionLevel: item.AccessRights,
-                    FolderName: item.FolderName,
-                    Modification: 'Remove',
-                  })
-                })
-              } else {
-                const originalUser = row._raw ? row._raw.User : row.User
-                permissions.push({
-                  UserID: originalUser, // Use original identifier for API calls
-                  PermissionLevel: row.AccessRights,
-                  FolderName: row.FolderName,
-                  Modification: 'Remove',
-                })
-              }
+              const rows = Array.isArray(row) ? row : [row]
+              // UserId is the resolved recipient; User is only a display
+              // name, which Exchange cannot resolve when two share it.
+              const permissions = rows.map((item) => ({
+                UserID: item._raw?.UserId || item._raw?.User || item.User,
+                DisplayName: item._raw?.User || item.User,
+                PermissionLevel: item.AccessRights,
+                FolderName: item.FolderName,
+                Modification: 'Remove',
+              }))
               return {
                 userID: graphUserRequest.data?.[0]?.userPrincipalName,
                 tenantFilter: userSettingsDefaults.currentTenant,
@@ -1013,7 +995,8 @@ const Page = () => {
                       tenantFilter: userSettingsDefaults.currentTenant,
                       permissions: [
                         {
-                          UserID: originalUser, // Use original identifier for API calls
+                          UserID: data._raw?.UserId || originalUser,
+                          DisplayName: originalUser,
                           PermissionLevel: data.AccessRights,
                           FolderName: data.FolderName,
                           Modification: 'Remove',
@@ -1425,6 +1408,13 @@ const Page = () => {
     <HeaderedTabbedLayout
       tabOptions={tabOptions}
       title={title}
+      titleControl={
+        <CippUserSwitcher
+          title={title}
+          currentUserId={userId}
+          tenantFilter={userSettingsDefaults.currentTenant}
+        />
+      }
       subtitle={subtitle}
       actions={CippExchangeActions()}
       actionsData={userRequest.data?.[0]?.MailboxActionsData}
@@ -1469,7 +1459,9 @@ const Page = () => {
               'Microsoft.Exchange.Configuration.Tasks.ManagementObjectNotFoundException'
             ) && (
               <>
-                <Grid size={4}>
+                {/* Stacked below lg — a 4/8 split at phone widths leaves both columns too
+                    narrow to hold a label, breaking the text one word per line. */}
+                <Grid size={{ xs: 12, lg: 4 }}>
                   <CippExchangeInfoCard
                     exchangeData={data}
                     isLoading={userRequest.isLoading}
@@ -1477,7 +1469,7 @@ const Page = () => {
                     handleRefresh={() => userRequest.refetch()}
                   />
                 </Grid>
-                <Grid size={8}>
+                <Grid size={{ xs: 12, lg: 8 }}>
                   <Stack spacing={3}>
                     <CippBannerListCard
                       isFetching={graphUserRequest.isLoading}

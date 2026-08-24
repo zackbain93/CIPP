@@ -12,6 +12,8 @@ import {
   CleaningServices,
   Assessment,
   FolderShared,
+  ManageAccounts,
+  PersonSearch,
   RestoreFromTrash,
   Settings,
 } from '@mui/icons-material'
@@ -27,6 +29,14 @@ import { CippPropertyList } from '../../../components/CippComponents/CippPropert
 import { ApiGetCall } from '../../../api/ApiCall'
 import { CippEditSitePropertiesForm } from '../../../components/CippComponents/CippEditSitePropertiesForm'
 import { CippSiteRecycleBinDialog } from '../../../components/CippComponents/CippSiteRecycleBinDialog'
+import { CippLibraryPermissionsDialog } from '../../../components/CippComponents/CippLibraryPermissionsDialog'
+import { CippCheckUserAccessDialog } from '../../../components/CippComponents/CippCheckUserAccessDialog'
+import { CippSharePointQuotaCard } from '../../../components/CippCards/CippSharePointQuotaCard'
+import {
+  CippAnonymizedReportAlert,
+  isReportAnonymized,
+  useReportAnonymized,
+} from '../../../components/CippComponents/CippAnonymizedReportAlert'
 
 // Friendly labels for the SharePoint version cleanup (trim) job progress fields.
 const VERSION_CLEANUP_LABELS = {
@@ -144,6 +154,30 @@ const Page = () => {
     allowToggle: true,
     defaultCached: true,
     allowAllTenantSync: true,
+  })
+
+  // Two different faults produce empty usage columns here, and they need different advice.
+  //
+  // Anonymization: Microsoft 365 hashes the owner names in the SharePoint site usage report.
+  // Only hashed values prove this - absent usage data does not, because anonymization still
+  // returns rows, it just hashes them. Both the live and cached paths merge the same report,
+  // so this is not gated on cache mode.
+  const anonymizedReport = useReportAnonymized({
+    url: reportDB.resolvedApiUrl,
+    data: reportDB.resolvedApiData,
+    queryKey: reportDB.resolvedQueryKey,
+    check: (rows) => isReportAnonymized(rows, ['ownerPrincipalName', 'ownerDisplayName']),
+  })
+
+  // Empty usage report: getSharePointSiteUsageDetail returns no rows at all for tenants
+  // Microsoft has not generated a report for yet. The site listing still populates the table,
+  // so every usage-derived column is blank. reportRefreshDate comes only from that report, so
+  // an empty one across every row means the merge contributed nothing.
+  const noUsageData = useReportAnonymized({
+    url: reportDB.resolvedApiUrl,
+    data: reportDB.resolvedApiData,
+    queryKey: reportDB.resolvedQueryKey,
+    check: (rows) => rows.every((site) => !site?.reportRefreshDate),
   })
 
   const actions = [
@@ -353,48 +387,54 @@ const Page = () => {
         <CippEditSitePropertiesForm formHook={formHook} row={row} tenantFilter={tenantFilter} />
       ),
       customDataformatter: (row, action, formData) => {
-        const siteRow = Array.isArray(row) ? row[0] : row
-        const isGroupSite = siteRow?.rootWebTemplate === 'Group'
         const v = (x) => (x && typeof x === 'object' && 'value' in x ? x.value : x)
-        const payload = {
-          tenantFilter: siteRow.Tenant ?? tenantFilter,
-          SiteUrl: siteRow.webUrl,
-          SharingCapability: v(formData.SharingCapability),
-          DefaultSharingLinkType: v(formData.DefaultSharingLinkType),
-          DefaultLinkPermission: v(formData.DefaultLinkPermission),
-          LockState: v(formData.LockState),
-        }
-        if (!isGroupSite) {
-          payload.Title = formData.Title
-          payload.SharingDomainRestrictionMode = v(formData.SharingDomainRestrictionMode)
-          payload.OverrideTenantAnonymousLinkExpirationPolicy =
-            !!formData.OverrideTenantAnonymousLinkExpirationPolicy
-          payload.InheritVersionPolicyFromTenant = !!formData.InheritVersionPolicyFromTenant
-        }
-        if (!isGroupSite && v(formData.SharingDomainRestrictionMode) === 'AllowList') {
-          payload.SharingAllowedDomainList = formData.SharingAllowedDomainList
-        }
-        if (!isGroupSite && v(formData.SharingDomainRestrictionMode) === 'BlockList') {
-          payload.SharingBlockedDomainList = formData.SharingBlockedDomainList
-        }
-        if (!isGroupSite && formData.OverrideTenantAnonymousLinkExpirationPolicy) {
-          payload.AnonymousLinkExpirationInDays = parseInt(
-            formData.AnonymousLinkExpirationInDays ?? 0,
-            10
-          )
-        }
-        const storageMax = parseInt(formData.StorageMaximumLevel, 10)
-        const storageWarn = parseInt(formData.StorageWarningLevel, 10)
-        if (!isNaN(storageMax) && storageMax > 0) payload.StorageMaximumLevel = storageMax
-        if (!isNaN(storageWarn) && storageWarn > 0) payload.StorageWarningLevel = storageWarn
-        if (!isGroupSite && !formData.InheritVersionPolicyFromTenant) {
-          payload.EnableAutoExpirationVersionTrim = !!formData.EnableAutoExpirationVersionTrim
-          if (!formData.EnableAutoExpirationVersionTrim) {
-            payload.MajorVersionLimit = parseInt(formData.MajorVersionLimit ?? 0, 10)
-            payload.ExpireVersionsAfterDays = parseInt(formData.ExpireVersionsAfterDays ?? 0, 10)
+        // isGroupSite is evaluated per site: a selection can mix group-backed and classic
+        // sites, and the group-backed ones reject the properties guarded below.
+        const formatRow = (siteRow) => {
+          const isGroupSite = siteRow?.rootWebTemplate === 'Group'
+          const payload = {
+            tenantFilter: siteRow.Tenant ?? tenantFilter,
+            SiteUrl: siteRow.webUrl,
+            SharingCapability: v(formData.SharingCapability),
+            DefaultSharingLinkType: v(formData.DefaultSharingLinkType),
+            DefaultLinkPermission: v(formData.DefaultLinkPermission),
+            LockState: v(formData.LockState),
           }
+          if (!isGroupSite) {
+            payload.Title = formData.Title
+            payload.SharingDomainRestrictionMode = v(formData.SharingDomainRestrictionMode)
+            payload.OverrideTenantAnonymousLinkExpirationPolicy =
+              !!formData.OverrideTenantAnonymousLinkExpirationPolicy
+            payload.InheritVersionPolicyFromTenant = !!formData.InheritVersionPolicyFromTenant
+          }
+          if (!isGroupSite && v(formData.SharingDomainRestrictionMode) === 'AllowList') {
+            payload.SharingAllowedDomainList = formData.SharingAllowedDomainList
+          }
+          if (!isGroupSite && v(formData.SharingDomainRestrictionMode) === 'BlockList') {
+            payload.SharingBlockedDomainList = formData.SharingBlockedDomainList
+          }
+          if (!isGroupSite && formData.OverrideTenantAnonymousLinkExpirationPolicy) {
+            payload.AnonymousLinkExpirationInDays = parseInt(
+              formData.AnonymousLinkExpirationInDays ?? 0,
+              10
+            )
+          }
+          const storageMax = parseInt(formData.StorageMaximumLevel, 10)
+          const storageWarn = parseInt(formData.StorageWarningLevel, 10)
+          if (!isNaN(storageMax) && storageMax > 0) payload.StorageMaximumLevel = storageMax
+          if (!isNaN(storageWarn) && storageWarn > 0) payload.StorageWarningLevel = storageWarn
+          if (!isGroupSite && !formData.InheritVersionPolicyFromTenant) {
+            payload.EnableAutoExpirationVersionTrim = !!formData.EnableAutoExpirationVersionTrim
+            if (!formData.EnableAutoExpirationVersionTrim) {
+              payload.MajorVersionLimit = parseInt(formData.MajorVersionLimit ?? 0, 10)
+              payload.ExpireVersionsAfterDays = parseInt(formData.ExpireVersionsAfterDays ?? 0, 10)
+            }
+          }
+          return payload
         }
-        return payload
+        // When multiple rows are selected, row is an array. Returning an array
+        // makes CippApiDialog send one request per row (bulk request mode).
+        return Array.isArray(row) ? row.map(formatRow) : formatRow(row)
       },
       multiPost: false,
       allowResubmit: true,
@@ -480,123 +520,37 @@ const Page = () => {
       multiPost: false,
     },
     {
-      label: 'Set Library Permission',
-      type: 'POST',
-      icon: <FolderShared />,
-      url: '/api/ExecSetLibraryPermission',
-      confirmText:
-        'Grant users or groups a permission level on a document library of [displayName].',
-      condition: () => canWriteSite,
-      children: ({ formHook, row }) => {
-        const siteRow = Array.isArray(row) ? row[0] : row
-        return (
-          <>
-            <CippFormComponent
-              type="autoComplete"
-              name="library"
-              label="Document Library"
-              multiple={false}
-              creatable={false}
-              formControl={formHook}
-              validators={{ required: 'Please select a document library' }}
-              api={{
-                url: '/api/ListSiteLibraries',
-                data: {
-                  SiteId: siteRow?.siteId,
-                  SiteUrl: siteRow?.webUrl,
-                  tenantFilter: siteRow?.Tenant ?? tenantFilter,
-                },
-                queryKey: `SiteLibraries-${siteRow?.siteId}`,
-                dataKey: 'Results',
-                labelField: (library) => library.Title,
-                valueField: 'Id',
-                showRefresh: true,
-              }}
-            />
-            <CippFormComponent
-              type="autoComplete"
-              name="users"
-              label="Users"
-              multiple={true}
-              creatable={false}
-              formControl={formHook}
-              api={{
-                url: '/api/ListGraphRequest',
-                data: {
-                  Endpoint: 'users',
-                  $select: 'id,displayName,userPrincipalName',
-                  $top: 999,
-                  $count: true,
-                },
-                queryKey: 'ListUsersAutoComplete',
-                dataKey: 'Results',
-                labelField: (user) => `${user.displayName} (${user.userPrincipalName})`,
-                valueField: 'userPrincipalName',
-                addedField: {
-                  id: 'id',
-                },
-                showRefresh: true,
-              }}
-            />
-            <CippFormComponent
-              type="autoComplete"
-              name="groups"
-              label="Groups"
-              multiple={true}
-              creatable={false}
-              formControl={formHook}
-              api={{
-                url: '/api/ListGraphRequest',
-                data: {
-                  Endpoint: 'groups',
-                  $select: 'id,displayName,mail,securityEnabled,groupTypes',
-                  $top: 999,
-                  $count: true,
-                },
-                queryKey: 'ListGroupsAutoComplete',
-                dataKey: 'Results',
-                labelField: (group) =>
-                  group.mail ? `${group.displayName} (${group.mail})` : group.displayName,
-                valueField: 'id',
-                addedField: {
-                  securityEnabled: 'securityEnabled',
-                  groupTypes: 'groupTypes',
-                },
-                showRefresh: true,
-              }}
-            />
-            <CippFormComponent
-              type="radio"
-              name="PermissionLevel"
-              label="Permission Level"
-              formControl={formHook}
-              options={[
-                { label: 'Read', value: 'read' },
-                { label: 'Contribute', value: 'contribute' },
-                { label: 'Edit', value: 'edit' },
-                { label: 'Design', value: 'design' },
-                { label: 'Full Control', value: 'fullControl' },
-              ]}
-            />
-          </>
-        )
-      },
-      defaultvalues: {
-        PermissionLevel: 'read',
-      },
-      customDataformatter: (row, action, formData) => {
-        const siteRow = Array.isArray(row) ? row[0] : row
-        return {
-          tenantFilter: siteRow.Tenant ?? tenantFilter,
-          SiteUrl: siteRow.webUrl,
-          ListId: formData.library?.value,
-          LibraryName: formData.library?.label,
-          PermissionLevel: formData.PermissionLevel,
-          Users: formData.users ?? [],
-          Groups: formData.groups ?? [],
-        }
-      },
+      // Read access is enough to open this: the dialog gates every change on write access,
+      // so a read-only admin can still inspect who has what.
+      label: 'Manage Permissions',
+      icon: <ManageAccounts />,
+      condition: () => canReadSite,
+      customComponent: (row, { drawerVisible, setDrawerVisible }) => (
+        <CippLibraryPermissionsDialog
+          row={row}
+          tenantFilter={tenantFilter}
+          drawerVisible={drawerVisible}
+          setDrawerVisible={setDrawerVisible}
+        />
+      ),
       multiPost: false,
+      hideBulk: true,
+    },
+    {
+      // Answers "does this person have access, and how" rather than "who holds permissions".
+      label: 'Check User Access',
+      icon: <PersonSearch />,
+      condition: () => canReadSite,
+      customComponent: (row, { drawerVisible, setDrawerVisible }) => (
+        <CippCheckUserAccessDialog
+          row={row}
+          tenantFilter={tenantFilter}
+          drawerVisible={drawerVisible}
+          setDrawerVisible={setDrawerVisible}
+        />
+      ),
+      multiPost: false,
+      hideBulk: true,
     },
     {
       label: 'Delete Site',
@@ -730,6 +684,7 @@ const Page = () => {
         />
       ),
       multiPost: false,
+      hideBulk: true,
     },
     {
       label: 'Check Cleanup Job Status',
@@ -744,6 +699,7 @@ const Page = () => {
         />
       ),
       multiPost: false,
+      hideBulk: true,
     },
   ]
 
@@ -795,7 +751,6 @@ const Page = () => {
       >
         Bulk Add Sites
       </Button>
-      {reportDB.controls}
     </Stack>
   )
 
@@ -810,6 +765,23 @@ const Page = () => {
         offCanvas={offCanvas}
         simpleColumns={simpleColumns}
         cardButton={pageActions}
+        dataSourceControls={reportDB.controls}
+        tableFilter={
+          <>
+            <CippSharePointQuotaCard />
+            <CippAnonymizedReportAlert show={anonymizedReport}>
+              Site owner names in this report are pseudo-anonymised because Microsoft 365 report
+              anonymization is enabled for this tenant.
+            </CippAnonymizedReportAlert>
+            {!anonymizedReport && noUsageData && (
+              <Alert severity="info">
+                Microsoft returned no SharePoint usage report for this tenant, so activity,
+                storage and file count are blank. The site list itself is complete. Usage reports
+                can take up to 48 hours to appear on a new tenant.
+              </Alert>
+            )}
+          </>
+        }
       />
       {reportDB.syncDialog}
     </>
