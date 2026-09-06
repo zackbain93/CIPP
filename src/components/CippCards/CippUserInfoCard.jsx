@@ -1,24 +1,129 @@
 import PropTypes from "prop-types";
-import { Avatar, Card, CardHeader, Divider, Skeleton, Typography, Alert } from "@mui/material";
-import { AccountCircle } from "@mui/icons-material";
-import { PropertyList } from "/src/components/property-list";
-import { PropertyListItem } from "/src/components/property-list-item";
+import { CippIcons } from "../../utils/icon-registry";
+import {
+  Avatar,
+  Card,
+  CardHeader,
+  Divider,
+  Skeleton,
+  Typography,
+  Alert,
+  IconButton,
+  Tooltip,
+  CircularProgress,
+} from "@mui/material";
+import { PropertyList } from "../property-list";
+import { PropertyListItem } from "../property-list-item";
 import { getCippFormatting } from "../../utils/get-cipp-formatting";
-import { Stack, Grid } from "@mui/system";
+import { Stack, Grid, Box } from "@mui/system";
+import { useState, useRef, useCallback } from "react";
+import { ApiPostCall } from "../../api/ApiCall";
+import { useLicenseBackfill } from "../../hooks/use-license-backfill";
 
 export const CippUserInfoCard = (props) => {
   const { user, tenant, isFetching = false, ...other } = props;
+  const [photoTimestamp, setPhotoTimestamp] = useState(Date.now());
+  const [uploadError, setUploadError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
+  const fileInputRef = useRef(null);
+  
+  // Hook to trigger re-render when license backfill completes
+  const { updateTrigger } = useLicenseBackfill();
+
+  // API mutations
+  const setPhotoMutation = ApiPostCall({ urlFromData: true });
+  const removePhotoMutation = ApiPostCall({ urlFromData: true });
 
   // Helper function to check if a section has any data
-  const hasWorkInfo = user?.jobTitle || user?.department || user?.manager?.displayName || user?.companyName;
+  const hasWorkInfo =
+    user?.jobTitle || user?.department || user?.manager?.displayName || user?.companyName;
   const hasAddressInfo =
     user?.streetAddress || user?.postalCode || user?.city || user?.country || user?.officeLocation;
   const hasContactInfo =
     user?.mobilePhone || (user?.businessPhones && user?.businessPhones.length > 0);
 
-  // Handle image URL - only set if user and tenant exist, otherwise let Avatar fall back to children
+  // Handle image URL with timestamp for cache busting
   const imageUrl =
-    user?.id && tenant ? `/api/ListUserPhoto?TenantFilter=${tenant}&UserId=${user.id}` : undefined;
+    user?.id && tenant
+      ? `/api/ListUserPhoto?TenantFilter=${tenant}&UserId=${user.id}&t=${photoTimestamp}`
+      : undefined;
+
+  const handleFileSelect = async (event) => {
+    const file = event.target.files[0];
+    setUploadError(null);
+    setSuccessMessage(null);
+
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ["image/jpeg", "image/jpg", "image/png"];
+    if (!validTypes.includes(file.type)) {
+      setUploadError("Please select a valid image file (JPEG or PNG)");
+      return;
+    }
+
+    // Validate file size (4MB max)
+    const maxSize = 4 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setUploadError(
+        `File size exceeds 4MB limit. Current size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`
+      );
+      return;
+    }
+
+    // Convert to base64 and upload
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        await setPhotoMutation.mutateAsync({
+          url: "/api/ExecSetUserPhoto",
+          data: {
+            userId: user.id,
+            tenantFilter: tenant,
+            action: "set",
+            photoData: reader.result,
+          },
+        });
+        setPhotoTimestamp(Date.now());
+        setSuccessMessage("Profile picture updated successfully!");
+        setTimeout(() => setSuccessMessage(null), 3000);
+      } catch (error) {
+        setUploadError(error.message || "Failed to upload photo");
+      }
+    };
+    reader.onerror = () => {
+      setUploadError("Failed to read file");
+    };
+    reader.readAsDataURL(file);
+
+    // Clear the input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    setUploadError(null);
+    setSuccessMessage(null);
+
+    try {
+      await removePhotoMutation.mutateAsync({
+        url: "/api/ExecSetUserPhoto",
+        data: {
+          userId: user.id,
+          tenantFilter: tenant,
+          action: "remove",
+        },
+      });
+      setPhotoTimestamp(Date.now());
+      setSuccessMessage("Profile picture removed successfully!");
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error) {
+      setUploadError(error.message || "Failed to remove photo");
+    }
+  };
+
+  const isLoading = setPhotoMutation.isPending || removePhotoMutation.isPending;
 
   return (
     <Card {...other}>
@@ -31,28 +136,108 @@ export const CippUserInfoCard = (props) => {
             isFetching ? (
               <Skeleton variant="text" width={200} />
             ) : (
-              <Grid container spacing={3} alignItems="center">
-                {/* Avatar section */}
-                <Grid size={{ xs: 12, sm: 4, md: 3 }}>
-                  <Stack alignItems="center">
-                    <Avatar
-                      sx={{
-                        height: 64,
-                        width: 64,
-                      }}
-                      variant="circular"
-                      src={imageUrl}
-                    >
-                      <AccountCircle sx={{ fontSize: 40 }} />
-                    </Avatar>
+              <Grid container spacing={3} sx={{
+                alignItems: "center"
+              }}>
+                {/* Avatar section — "auto" rather than a full row on xs: the picture is a
+                    fixed 64px, so collapsing it to its own line only pushes the identity
+                    fields down without making the picture any bigger. */}
+                <Grid size={{ xs: "auto", sm: 4, md: 3 }}>
+                  <Stack spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
+                    <Box sx={{
+                      position: "relative"
+                    }}>
+                      <Avatar
+                        sx={{
+                          height: 64,
+                          width: 64,
+                        }}
+                        variant="circular"
+                        src={imageUrl}
+                      >
+                        <CippIcons.AccountCircle sx={{ fontSize: 40 }} />
+                      </Avatar>
+                      {isLoading && (
+                        <CircularProgress
+                          size={68}
+                          sx={{
+                            position: "absolute",
+                            top: -2,
+                            left: -2,
+                            zIndex: 1,
+                          }}
+                        />
+                      )}
+                    </Box>
+                    {/* Photo management buttons */}
+                    <Stack direction="row" spacing={0.5}>
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        style={{ display: "none" }}
+                        accept="image/jpeg,image/jpg,image/png"
+                        onChange={handleFileSelect}
+                      />
+                      <Tooltip title="Change Photo">
+                        <IconButton
+                          size="small"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isLoading}
+                          sx={{
+                            backgroundColor: "action.hover",
+                            "&:hover": { backgroundColor: "action.selected" },
+                          }}
+                        >
+                          <CippIcons.PhotoCamera fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Remove Photo">
+                        <IconButton
+                          size="small"
+                          onClick={handleRemovePhoto}
+                          disabled={isLoading}
+                          sx={{
+                            backgroundColor: "action.hover",
+                            "&:hover": {
+                              backgroundColor: "error.main",
+                              color: "error.contrastText",
+                            },
+                          }}
+                        >
+                          <CippIcons.Delete fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                    {/* Status messages */}
+                    {successMessage && (
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: "success.main",
+                          textAlign: "center"
+                        }}>
+                        {successMessage}
+                      </Typography>
+                    )}
+                    {uploadError && (
+                      <Typography variant="caption" color="error" sx={{
+                        textAlign: "center"
+                      }}>
+                        {uploadError}
+                      </Typography>
+                    )}
                   </Stack>
                 </Grid>
 
-                {/* Status information section */}
-                <Grid size={{ xs: 12, sm: 8, md: 9 }}>
+                {/* Status information section — grows into whatever the avatar leaves */}
+                <Grid size={{ xs: true, sm: 8, md: 9 }} sx={{ minWidth: 0 }}>
                   <Grid container spacing={2}>
                     <Grid size={{ xs: 12, sm: 6 }}>
-                      <Typography variant="inherit" color="text.primary" gutterBottom>
+                      <Typography variant="inherit" gutterBottom sx={{
+                        color: "text.primary"
+                      }}>
                         Account Enabled:
                       </Typography>
                       <Typography variant="inherit">
@@ -61,7 +246,9 @@ export const CippUserInfoCard = (props) => {
                     </Grid>
 
                     <Grid size={{ xs: 12, sm: 6 }}>
-                      <Typography variant="inherit" color="text.primary" gutterBottom>
+                      <Typography variant="inherit" gutterBottom sx={{
+                        color: "text.primary"
+                      }}>
                         Synced from AD:
                       </Typography>
                       <Typography variant="inherit">
@@ -84,7 +271,9 @@ export const CippUserInfoCard = (props) => {
             ) : (
               <Grid container spacing={2}>
                 <Grid size={{ xs: 12, md: 7.5 }}>
-                  <Typography variant="inherit" color="text.primary" gutterBottom>
+                  <Typography variant="inherit" gutterBottom sx={{
+                    color: "text.primary"
+                  }}>
                     Display Name:
                   </Typography>
                   <Typography variant="inherit">
@@ -92,7 +281,9 @@ export const CippUserInfoCard = (props) => {
                   </Typography>
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <Typography variant="inherit" color="text.primary" gutterBottom>
+                  <Typography variant="inherit" gutterBottom sx={{
+                    color: "text.primary"
+                  }}>
                     Email Address:
                   </Typography>
                   <Typography variant="inherit">
@@ -100,7 +291,9 @@ export const CippUserInfoCard = (props) => {
                   </Typography>
                 </Grid>
                 <Grid size={{ xs: 12 }}>
-                  <Typography variant="inherit" color="text.primary" gutterBottom>
+                  <Typography variant="inherit" gutterBottom sx={{
+                    color: "text.primary"
+                  }}>
                     User Principal Name:
                   </Typography>
                   <Typography variant="inherit">
@@ -116,6 +309,7 @@ export const CippUserInfoCard = (props) => {
         <PropertyListItem
           divider
           label="Licenses"
+          key={`licenses-${updateTrigger}`}
           value={
             isFetching ? (
               <Skeleton variant="text" width={180} />
@@ -137,14 +331,21 @@ export const CippUserInfoCard = (props) => {
             isFetching ? (
               <Skeleton variant="text" width={200} />
             ) : !hasWorkInfo ? (
-              <Typography variant="inherit" color="text.secondary" sx={{ fontStyle: "italic" }}>
+              <Typography
+                variant="inherit"
+                sx={{
+                  color: "text.secondary",
+                  fontStyle: "italic"
+                }}>
                 No work information available
               </Typography>
             ) : (
               <Grid container spacing={2}>
                 {user?.jobTitle && (
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Job Title:
                     </Typography>
                     <Typography variant="inherit">{user.jobTitle}</Typography>
@@ -152,7 +353,9 @@ export const CippUserInfoCard = (props) => {
                 )}
                 {user?.companyName && (
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Company Name:
                     </Typography>
                     <Typography variant="inherit">{user.companyName}</Typography>
@@ -160,7 +363,9 @@ export const CippUserInfoCard = (props) => {
                 )}
                 {user?.department && (
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Department:
                     </Typography>
                     <Typography variant="inherit">{user.department}</Typography>
@@ -168,7 +373,9 @@ export const CippUserInfoCard = (props) => {
                 )}
                 {user?.manager?.displayName && (
                   <Grid size={{ xs: 12 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Manager:
                     </Typography>
                     <Typography variant="inherit">{user.manager.displayName}</Typography>
@@ -187,14 +394,21 @@ export const CippUserInfoCard = (props) => {
             isFetching ? (
               <Skeleton variant="text" width={200} />
             ) : !hasContactInfo ? (
-              <Typography variant="inherit" color="text.secondary" sx={{ fontStyle: "italic" }}>
+              <Typography
+                variant="inherit"
+                sx={{
+                  color: "text.secondary",
+                  fontStyle: "italic"
+                }}>
                 No contact information available
               </Typography>
             ) : (
               <Grid container spacing={2}>
                 {user?.mobilePhone && (
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Mobile Phone:
                     </Typography>
                     <Typography variant="inherit">{user.mobilePhone}</Typography>
@@ -202,7 +416,9 @@ export const CippUserInfoCard = (props) => {
                 )}
                 {user?.businessPhones && user.businessPhones.length > 0 && (
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Business Phones:
                     </Typography>
                     <Typography variant="inherit">{user.businessPhones.join(", ")}</Typography>
@@ -220,14 +436,21 @@ export const CippUserInfoCard = (props) => {
             isFetching ? (
               <Skeleton variant="text" width={200} />
             ) : !hasAddressInfo ? (
-              <Typography variant="inherit" color="text.secondary" sx={{ fontStyle: "italic" }}>
+              <Typography
+                variant="inherit"
+                sx={{
+                  color: "text.secondary",
+                  fontStyle: "italic"
+                }}>
                 No address information available
               </Typography>
             ) : (
               <Grid container spacing={2}>
                 {user?.streetAddress && (
                   <Grid size={{ xs: 12 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Street Address:
                     </Typography>
                     <Typography variant="inherit">{user.streetAddress}</Typography>
@@ -235,7 +458,9 @@ export const CippUserInfoCard = (props) => {
                 )}
                 {user?.city && (
                   <Grid size={{ xs: 12, md: 4 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       City:
                     </Typography>
                     <Typography variant="inherit">{user.city}</Typography>
@@ -243,7 +468,9 @@ export const CippUserInfoCard = (props) => {
                 )}
                 {user?.postalCode && (
                   <Grid size={{ xs: 12, md: 4 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Postal Code:
                     </Typography>
                     <Typography variant="inherit">{user.postalCode}</Typography>
@@ -251,7 +478,9 @@ export const CippUserInfoCard = (props) => {
                 )}
                 {user?.country && (
                   <Grid size={{ xs: 12, md: 4 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Country:
                     </Typography>
                     <Typography variant="inherit">{user.country}</Typography>
@@ -259,7 +488,9 @@ export const CippUserInfoCard = (props) => {
                 )}
                 {user?.officeLocation && (
                   <Grid size={{ xs: 12 }}>
-                    <Typography variant="inherit" color="text.primary" gutterBottom>
+                    <Typography variant="inherit" gutterBottom sx={{
+                      color: "text.primary"
+                    }}>
                       Office Location:
                     </Typography>
                     <Typography variant="inherit">{user.officeLocation}</Typography>

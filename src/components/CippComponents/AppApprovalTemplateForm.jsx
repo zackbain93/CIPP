@@ -1,11 +1,13 @@
 import { useState, useEffect, use } from "react";
-import { Alert, Skeleton, Stack, Typography, Button, Box } from "@mui/material";
+import { Alert, Skeleton, Stack, Typography, Button, Box, Link } from "@mui/material";
 import { CippFormComponent } from "./CippFormComponent";
 import { CippFormCondition } from "./CippFormCondition";
 import { CippApiResults } from "./CippApiResults";
 import { Grid } from "@mui/system";
 import CippPermissionPreview from "./CippPermissionPreview";
 import { useWatch } from "react-hook-form";
+import { CippPermissionSetDrawer } from "./CippPermissionSetDrawer";
+import { ApiGetCall } from "../../api/ApiCall";
 
 const AppApprovalTemplateForm = ({
   formControl,
@@ -16,9 +18,84 @@ const AppApprovalTemplateForm = ({
   updatePermissions,
   onSubmit,
   refetchKey,
+  hideSubmitButton = false, // New prop to hide the submit button when used in a drawer
 }) => {
+  const forbiddenManifestProperties = ["keyCredentials", "passwordCredentials"];
   const [selectedPermissionSet, setSelectedPermissionSet] = useState(null);
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
+  const [permissionSetDrawerVisible, setPermissionSetDrawerVisible] = useState(false);
+  const [manifestSanitizeMessage, setManifestSanitizeMessage] = useState(null);
+
+  // Shares its queryKey with the permission set autocomplete below, so this reuses that cache.
+  const permissionSets = ApiGetCall({
+    url: "/api/ExecAppPermissionTemplate",
+    queryKey: "execAppPermissionTemplate",
+  });
+
+  const getManifestValidationError = (manifest) => {
+    if (!manifest.displayName) {
+      return "Application manifest must include a 'displayName' property";
+    }
+
+    if (manifest.signInAudience && manifest.signInAudience !== "AzureADMyOrg") {
+      return "signInAudience must be null, undefined, or 'AzureADMyOrg' for security reasons";
+    }
+
+    const presentForbiddenProperties = forbiddenManifestProperties.filter(
+      (propertyName) => Object.prototype.hasOwnProperty.call(manifest, propertyName)
+    );
+    if (presentForbiddenProperties.length > 0) {
+      return `Remove unsupported manifest properties: ${presentForbiddenProperties.join(", ")}.`;
+    }
+
+    return null;
+  };
+
+  const handleSanitizeManifest = () => {
+    const currentManifest = formControl.getValues("applicationManifest");
+
+    if (!currentManifest) {
+      setManifestSanitizeMessage({
+        severity: "warning",
+        text: "Paste a manifest first, then use cleanup.",
+      });
+      return;
+    }
+
+    try {
+      const parsedManifest = JSON.parse(currentManifest);
+      const removedProperties = forbiddenManifestProperties.filter((propertyName) =>
+        Object.prototype.hasOwnProperty.call(parsedManifest, propertyName)
+      );
+
+      if (removedProperties.length === 0) {
+        setManifestSanitizeMessage({
+          severity: "info",
+          text: "No forbidden sections found. Your manifest is already clean.",
+        });
+        return;
+      }
+
+      removedProperties.forEach((propertyName) => {
+        delete parsedManifest[propertyName];
+      });
+
+      formControl.setValue("applicationManifest", JSON.stringify(parsedManifest, null, 2), {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+
+      setManifestSanitizeMessage({
+        severity: "success",
+        text: `Removed forbidden sections: ${removedProperties.join(", ")}.`,
+      });
+    } catch (error) {
+      setManifestSanitizeMessage({
+        severity: "error",
+        text: "Manifest JSON is invalid. Fix the JSON and try cleanup again.",
+      });
+    }
+  };
 
   // Watch for app type selection changes
   const selectedAppType = useWatch({
@@ -36,6 +113,28 @@ const AppApprovalTemplateForm = ({
     control: formControl?.control,
     name: "applicationManifest",
   });
+
+  const getForbiddenManifestPropertiesPresent = (manifestValue) => {
+    if (!manifestValue) {
+      return [];
+    }
+
+    try {
+      const manifest = JSON.parse(manifestValue);
+      return forbiddenManifestProperties.filter((propertyName) =>
+        Object.prototype.hasOwnProperty.call(manifest, propertyName)
+      );
+    } catch {
+      return [];
+    }
+  };
+
+  const forbiddenPropertiesInCurrentManifest =
+    selectedAppType === "ApplicationManifest"
+      ? getForbiddenManifestPropertiesPresent(selectedApplicationManifest)
+      : [];
+  const showSanitizeManifestButton = forbiddenPropertiesInCurrentManifest.length > 0;
+  const isTemplateFormValid = formControl?.formState?.isValid ?? false;
 
   // Watch for app selection changes to update template name
   const selectedApp = useWatch({
@@ -181,6 +280,31 @@ const AppApprovalTemplateForm = ({
     }
   }, [templateData, isCopy, isEditing, formControl]);
 
+  // A template stores a copy of the permission set taken when it was last saved, and that copy goes
+  // stale as soon as the set is edited. Re-seed from the linked set once it loads so the preview and
+  // the saved payload match the permissions deployment actually consents.
+  useEffect(() => {
+    if (!formControl || !(isEditing || isCopy)) return;
+
+    const template = templateData?.[0];
+    if (!template?.PermissionSetId) return;
+
+    const liveSet = permissionSets.data?.find((set) => set.TemplateId === template.PermissionSetId);
+    if (!liveSet) return;
+
+    const permissionSetValue = {
+      label: liveSet.TemplateName || template.PermissionSetName || "Custom Permissions",
+      value: template.PermissionSetId,
+      addedFields: {
+        Permissions: liveSet.Permissions || {},
+      },
+    };
+
+    formControl.setValue("permissionSetId", permissionSetValue, { shouldDirty: false });
+    setSelectedPermissionSet(permissionSetValue);
+    setPermissionsLoaded(true);
+  }, [permissionSets.data, templateData, isEditing, isCopy, formControl]);
+
   useEffect(() => {
     if (!formControl) return; // Early return if formControl is not available
 
@@ -233,6 +357,22 @@ const AppApprovalTemplateForm = ({
     }
   }, [isEditing, isCopy, templateData]);
 
+  useEffect(() => {
+    if (!formControl) {
+      return;
+    }
+
+    formControl.trigger();
+  }, [
+    formControl,
+    selectedAppType,
+    selectedApplicationManifest,
+    selectedApp,
+    selectedGalleryTemplate,
+    selectedPermissionSetValue,
+    templateData,
+  ]);
+
   // Handle form submission
   const handleSubmit = (data) => {
     let appDisplayName, appId, galleryTemplateId, applicationManifest;
@@ -246,11 +386,12 @@ const AppApprovalTemplateForm = ({
       try {
         applicationManifest = JSON.parse(data.applicationManifest);
 
-        // Validate signInAudience - only allow null/undefined or "AzureADMyOrg"
-        if (
-          applicationManifest.signInAudience &&
-          applicationManifest.signInAudience !== "AzureADMyOrg"
-        ) {
+        const manifestValidationError = getManifestValidationError(applicationManifest);
+        if (manifestValidationError) {
+          setManifestSanitizeMessage({
+            severity: "error",
+            text: manifestValidationError,
+          });
           return; // Don't submit if validation fails
         }
 
@@ -369,7 +510,7 @@ const AppApprovalTemplateForm = ({
                 name="appType"
                 label="Application Type"
                 type="select"
-                clearable={false}
+                disableClearable={true}
                 options={[
                   { label: "Enterprise Application", value: "EnterpriseApp" },
                   { label: "Gallery Template", value: "GalleryTemplate" },
@@ -413,6 +554,7 @@ const AppApprovalTemplateForm = ({
                   creatable={false}
                   required={true}
                   validators={{ required: "Application is required" }}
+                  helperText="Select a multi-tenant application to deploy in this template."
                 />
               </CippFormCondition>
               <CippFormCondition
@@ -477,24 +619,27 @@ const AppApprovalTemplateForm = ({
                     validate: (value) => {
                       try {
                         const manifest = JSON.parse(value);
-
-                        // Check for minimum required property
-                        if (!manifest.displayName) {
-                          return "Application manifest must include a 'displayName' property";
-                        }
-
-                        // Validate signInAudience if present
-                        if (manifest.signInAudience && manifest.signInAudience !== "AzureADMyOrg") {
-                          return "signInAudience must be null, undefined, or 'AzureADMyOrg' for security reasons";
-                        }
-
-                        return true;
+                        return getManifestValidationError(manifest) ?? true;
                       } catch (e) {
                         return "Invalid JSON format";
                       }
                     },
                   }}
                 />
+                <Stack spacing={1} sx={{ mt: 1 }}>
+                  {showSanitizeManifestButton && (
+                    <Box>
+                      <Button variant="outlined" onClick={handleSanitizeManifest}>
+                        Remove Forbidden Sections
+                      </Button>
+                    </Box>
+                  )}
+                  {manifestSanitizeMessage && (
+                    <Alert severity={manifestSanitizeMessage.severity}>
+                      {manifestSanitizeMessage.text}
+                    </Alert>
+                  )}
+                </Stack>
               </CippFormCondition>
 
               <CippFormCondition
@@ -522,22 +667,35 @@ const AppApprovalTemplateForm = ({
                   creatable={false}
                   required={true}
                   validators={{ required: "Permission Set is required" }}
+                  helperText={
+                    <>
+                      Select a permission set to apply to this application.{" "}
+                      <CippPermissionSetDrawer
+                        buttonText="Create Permission Set"
+                        isEditMode={false}
+                        drawerVisible={permissionSetDrawerVisible}
+                        setDrawerVisible={setPermissionSetDrawerVisible}
+                      />
+                    </>
+                  }
                 />
               </CippFormCondition>
 
-              <Stack spacing={2} sx={{ mt: 2 }}>
-                <Box>
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={formControl.handleSubmit(handleSubmit)}
-                    disabled={updatePermissions.isPending}
-                  >
-                    {isEditing ? "Update Template" : "Create Template"}
-                  </Button>
-                </Box>
-                <CippApiResults apiObject={updatePermissions} />
-              </Stack>
+              {!hideSubmitButton && (
+                <Stack spacing={2} sx={{ mt: 2 }}>
+                  <Box>
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      onClick={formControl.handleSubmit(handleSubmit)}
+                      disabled={updatePermissions.isPending || !isTemplateFormValid}
+                    >
+                      {isEditing ? "Update Template" : "Create Template"}
+                    </Button>
+                  </Box>
+                  <CippApiResults apiObject={updatePermissions} />
+                </Stack>
+              )}
             </>
           )}
         </Stack>

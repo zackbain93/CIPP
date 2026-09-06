@@ -1,0 +1,12 @@
+[
+  {
+    "label": "Standard & Drift Alignment",
+    "path": "/tenant/standards/alignment",
+    "icon": "FactCheck"
+  },
+  {
+    "label": "Templates",
+    "path": "/tenant/standards/templates",
+    "icon": "Description"
+  }
+]

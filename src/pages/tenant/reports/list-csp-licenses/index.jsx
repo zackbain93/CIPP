@@ -1,54 +1,53 @@
-import { Layout as DashboardLayout } from "/src/layouts/index.js";
-import { CippTablePage } from "/src/components/CippComponents/CippTablePage.jsx";
-import { MinusIcon, PlusIcon } from "@heroicons/react/24/outline";
-import { DeleteForever, ShoppingCart } from "@mui/icons-material";
+import { Layout as DashboardLayout } from "../../../../layouts/index";
+import { CippIcons } from "../../../../utils/icon-registry"
+import { CippTablePage } from "../../../../components/CippComponents/CippTablePage.jsx";
 import { Button } from "@mui/material";
 import Link from "next/link";
 
 const Page = () => {
-  const pageTitle = "CSP Licenses Report";
+  const pageTitle = "CSP Licences Report";
   const apiUrl = "/api/listCSPLicenses";
 
   const actions = [
     {
-      label: "Increase license count by 1",
+      label: "Increase licence count by 1",
       type: "POST",
-      icon: <PlusIcon />,
+      icon: <CippIcons.PlusIcon />,
       url: "/api/ExecCSPLicense",
       data: { Action: "!Add", sku: "sku", add: 1 },
-      confirmText: "Are you sure you want to buy 1 extra license?",
+      confirmText: "Are you sure you want to buy 1 extra licence?",
       multiPost: false,
     },
     {
-      label: "Decrease license count by 1",
+      label: "Decrease licence count by 1",
       type: "POST",
-      icon: <MinusIcon />,
+      icon: <CippIcons.MinusIcon />,
       url: "/api/ExecCSPLicense",
       data: { Action: "!Remove", sku: "sku", Remove: 1 },
-      confirmText: "Are you sure you want to decrease the license count by 1?",
+      confirmText: "Are you sure you want to decrease the licence count by 1?",
       multiPost: false,
     },
     {
-      label: "Increase license count",
+      label: "Increase licence count",
       type: "POST",
-      icon: <PlusIcon />,
+      icon: <CippIcons.PlusIcon />,
       url: "/api/ExecCSPLicense",
       data: { Action: "!Add", sku: "sku" },
       fields: [
         {
           type: "textField",
           name: "add",
-          label: "The number of licenses to add",
+          label: "The number of licences to add",
           multiple: false,
         },
       ],
-      confirmText: "Enter the amount of licenses to buy, and press confirm.",
+      confirmText: "Enter the amount of licences to buy, and press confirm.",
       multiPost: false,
     },
     {
-      label: "Decrease license count",
+      label: "Decrease licence count",
       type: "POST",
-      icon: <MinusIcon />,
+      icon: <CippIcons.MinusIcon />,
       url: "/api/ExecCSPLicense",
       fields: [
         {
@@ -59,13 +58,31 @@ const Page = () => {
         },
       ],
       data: { Action: "!Remove", sku: "sku" },
-      confirmText: "Enter the number of licenses to remove. This must be a number greater than 0.",
+      confirmText: "Enter the number of licences to remove. This must be a number greater than 0.",
+      multiPost: false,
+    },
+    {
+      label: "Schedule decrease of 1 at next renewal",
+      type: "POST",
+      icon: <CippIcons.EventRepeat />,
+      url: "/api/ExecCSPLicense",
+      data: { Action: "!ScheduleRemoval", sku: "sku", Remove: 1 },
+      fields: [
+        {
+          type: "number",
+          name: "DaysBeforeRenewal",
+          label: "Days before renewal to execute (default 3)",
+          multiple: false,
+        },
+      ],
+      confirmText:
+        "Schedule a decrease of 1 licence for [productName], executed shortly before the renewal date ([commitmentTerm.renewalConfiguration.renewalDate])? The decrease only happens if at least 1 licence is unassigned at that time; otherwise it is skipped and nothing changes.",
       multiPost: false,
     },
     {
       label: "Cancel Subscription",
       type: "POST",
-      icon: <DeleteForever />,
+      icon: <CippIcons.DeleteForever />,
       url: "/api/ExecCSPLicense",
       data: { Action: "!Cancel", SubscriptionIds: "id" },
       confirmText: "Are you sure you want to cancel this entire subscription?",
@@ -93,7 +110,7 @@ const Page = () => {
       simpleColumns={simpleColumns}
       cardButton={
         <>
-          <Button component={Link} href="/tenant/administration/add-subscription" startIcon={<ShoppingCart />}>
+          <Button component={Link} href="/tenant/administration/add-subscription" startIcon={<CippIcons.ShoppingCart />}>
             Add Subscription
           </Button>
         </>

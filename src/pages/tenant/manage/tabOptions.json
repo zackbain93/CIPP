@@ -1,0 +1,32 @@
+[
+  {
+    "label": "Edit Tenant",
+    "path": "/tenant/manage/edit",
+    "icon": "Settings"
+  },
+  {
+    "label": "Manage Drift",
+    "path": "/tenant/manage/drift",
+    "icon": "Sync"
+  },
+  {
+    "label": "Backup",
+    "path": "/tenant/manage/configuration-backup",
+    "icon": "Storage"
+  },
+  {
+    "label": "Standards Report",
+    "path": "/tenant/manage/applied-standards",
+    "icon": "FactCheck"
+  },
+  {
+    "label": "Policies and Settings Deployed",
+    "path": "/tenant/manage/policies-deployed",
+    "icon": "Policy"
+  },
+  {
+    "label": "History",
+    "path": "/tenant/manage/history",
+    "icon": "Timeline"
+  }
+]
